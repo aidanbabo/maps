@@ -27,40 +27,6 @@ impl<K, V> LinkedList<K, V>
 where
     K: Eq,
 {
-    pub fn get_key_value<Q: ?Sized>(&self, key: &Q) -> Option<(&K, &V)>
-    where
-        Q: Eq,
-        K: Borrow<Q>,
-    {
-        let mut curr_opt = self.head.as_ref();
-        while let Some(ref curr) = curr_opt {
-            if curr.key.borrow() == key {
-                return Some((&curr.key, &curr.value));
-            }
-            curr_opt = curr.next.as_ref();
-        }
-
-        None
-    }
-
-    pub fn get_mut<Q: ?Sized>(&mut self, key: &Q) -> Option<&mut V>
-    where
-        Q: Eq,
-        K: Borrow<Q>,
-    {
-        let mut option = &mut self.head;
-
-        while let Some(ref mut current) = option {
-            if current.key.borrow() == key {
-                return Some(&mut current.value);
-            }
-
-            option = &mut current.next;
-        }
-
-        None
-    }
-
     pub fn insert(&mut self, key: K, mut value: V) -> Option<V> {
         let mut option = &mut self.head;
 
@@ -83,10 +49,44 @@ where
         None
     }
 
+    pub fn get_key_value<Q: ?Sized>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Eq,
+    {
+        let mut curr_opt = self.head.as_ref();
+        while let Some(ref curr) = curr_opt {
+            if curr.key.borrow() == key {
+                return Some((&curr.key, &curr.value));
+            }
+            curr_opt = curr.next.as_ref();
+        }
+
+        None
+    }
+
+    pub fn get_mut<Q: ?Sized>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q>,
+        Q: Eq,
+    {
+        let mut option = &mut self.head;
+
+        while let Some(ref mut current) = option {
+            if current.key.borrow() == key {
+                return Some(&mut current.value);
+            }
+
+            option = &mut current.next;
+        }
+
+        None
+    }
+
     pub fn remove_entry<Q: ?Sized>(&mut self, key: &Q) -> Option<(K, V)>
     where
-        Q: Eq,
         K: Borrow<Q>,
+        Q: Eq,
     {
         let head = match self.head.as_mut() {
             Some(head) if head.key.borrow() == key => {

@@ -79,15 +79,35 @@ where
     K: Hash + Eq,
     S: BuildHasher,
 {
-    fn hash_index<Q: ?Sized>(&self, key: &Q) -> usize
+    fn hash<Q: ?Sized>(&self, key: &Q) -> u64
     where
         Q: Hash + Eq,
         K: Borrow<Q>,
     {
         let mut hasher = self.hash_builder.build_hasher();
         key.hash(&mut hasher);
-        let hash = hasher.finish() as usize;
-        hash & (self.table.len() - 1)
+        hasher.finish()
+    }
+
+    fn hash_index<Q: ?Sized>(&self, hash: u64) -> usize
+    where
+        Q: Hash + Eq,
+        K: Borrow<Q>,
+    {
+        hash as usize & (self.table.len() - 1)
+    }
+
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+        let ret = self.insert_into_table(key, value);
+        if ret.is_none() {
+            self.len += 1;
+        }
+
+        if self.len() >= (LOAD_FACTOR * self.table.len() as f64) as usize {
+            self.resize();
+        }
+
+        ret
     }
 
     pub fn contains_key<Q: ?Sized>(&self, key: &Q) -> bool
@@ -103,11 +123,12 @@ where
         Q: Hash + Eq,
         K: Borrow<Q>,
     {
-        let index = self.hash_index(key);
+        let hash = self.hash(key);
+        let index = self.hash_index(hash);
 
         match &mut self.table[index] {
             Entry::ListEntry(list) => list.get_mut(key),
-            Entry::TreeEntry(_list) => unimplemented!(),
+            Entry::TreeEntry(tree) => tree.get_mut(hash, key),
             Entry::Empty => None,
         }
     }
@@ -125,43 +146,13 @@ where
         Q: Hash + Eq,
         K: Borrow<Q>,
     {
-        let index = self.hash_index(key);
+        let hash = self.hash(key);
+        let index = self.hash_index(hash);
 
         match &self.table[index] {
             Entry::ListEntry(list) => list.get_key_value(key),
-            Entry::TreeEntry(_list) => unimplemented!(),
+            Entry::TreeEntry(tree) => tree.get_key_value(hash, key),
             Entry::Empty => None,
-        }
-    }
-
-    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        let index = self.hash_index(&key);
-
-        let ret = Self::insert_into_table(&mut self.table, index, key, value);
-        if ret.is_none() {
-            self.len += 1;
-        }
-
-        if self.len() >= (LOAD_FACTOR * self.table.len() as f64) as usize {
-            self.resize();
-        }
-
-        ret
-    }
-
-    fn insert_into_table(table: &mut [Entry<K, V>], index: usize, key: K, value: V) -> Option<V> {
-        match &mut table[index] {
-            Entry::ListEntry(list) => {
-                let res = list.insert(key, value);
-                res
-            }
-            Entry::TreeEntry(_list) => unimplemented!(),
-            Entry::Empty => {
-                let mut entry = LinkedList::new();
-                entry.insert(key, value);
-                table[index] = Entry::ListEntry(entry);
-                None
-            }
         }
     }
 
@@ -178,7 +169,8 @@ where
         Q: Hash + Eq,
         K: Borrow<Q>,
     {
-        let index = self.hash_index(key);
+        let hash = self.hash(key);
+        let index = self.hash_index(hash);
 
         match &mut self.table[index] {
             Entry::ListEntry(list) => {
@@ -192,7 +184,16 @@ where
                 res
             }
 
-            Entry::TreeEntry(_list) => unimplemented!(),
+            Entry::TreeEntry(tree) => {
+                let res = tree.remove_entry(hash, key);
+                if res.is_some() {
+                    self.len -= 1;
+                }
+                if tree.is_empty() {
+                    self.table[index] = Entry::Empty;
+                }
+                res
+            }
             Entry::Empty => None,
         }
     }
@@ -215,14 +216,33 @@ where
             match entry {
                 Entry::ListEntry(list) => {
                     for (k, v) in list {
-                        let index = self.hash_index(&k);
-
                         // ignores resizing
-                        Self::insert_into_table(&mut self.table, index, k, v);
+                        self.insert_into_table(k, v);
                     }
                 }
-                Entry::TreeEntry(_tree) => unimplemented!(),
+                Entry::TreeEntry(tree) => {
+                    for (k, v) in tree {
+                        // ignores resizing
+                        self.insert_into_table(k, v);
+                    }
+                }
                 Entry::Empty => {}
+            }
+        }
+    }
+
+    fn insert_into_table(&mut self, key: K, value: V) -> Option<V> {
+        let hash = self.hash(&key);
+        let index = self.hash_index(hash);
+
+        match &mut self.table[index] {
+            Entry::ListEntry(list) => list.insert(key, value),
+            Entry::TreeEntry(tree) => tree.insert(hash, key, value),
+            Entry::Empty => {
+                let mut entry = AvlTree::new();
+                entry.insert(hash, key, value);
+                self.table[index] = Entry::TreeEntry(entry);
+                None
             }
         }
     }
