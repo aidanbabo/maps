@@ -1,13 +1,14 @@
 use std::borrow::Borrow;
 use std::mem;
+use std::ptr::NonNull;
 
 #[derive(Debug)]
 struct Node<K, V> {
     hash: u64,
     key: K,
     value: V,
-    left: Option<Box<Node<K, V>>>,
-    right: Option<Box<Node<K, V>>>,
+    left: Option<NonNull<Node<K, V>>>,
+    right: Option<NonNull<Node<K, V>>>,
 }
 
 impl<K, V> Node<K, V> {
@@ -33,17 +34,27 @@ where
         } else if hash < self.hash {
             if let Some(ref mut left) = self.left {
                 // TODO rebalancing check
-                left.insert(hash, key, value)
+                // must always be init
+                unsafe { left.as_mut() }.insert(hash, key, value)
             } else {
-                self.left = Some(Box::new(Node::new(hash, key, value)));
+                self.left = unsafe {
+                    Some(NonNull::new_unchecked(Box::into_raw(Box::new(Node::new(
+                        hash, key, value,
+                    )))))
+                };
                 None
             }
         } else {
             if let Some(ref mut right) = self.right {
                 // TODO rebalancing check
-                right.insert(hash, key, value)
+                // must always be init
+                unsafe { right.as_mut() }.insert(hash, key, value)
             } else {
-                self.right = Some(Box::new(Node::new(hash, key, value)));
+                self.right = unsafe {
+                    Some(NonNull::new_unchecked(Box::into_raw(Box::new(Node::new(
+                        hash, key, value,
+                    )))))
+                };
                 None
             }
         }
@@ -58,13 +69,15 @@ where
             Some((&self.key, &self.value))
         } else if hash < self.hash {
             if let Some(ref left) = self.left {
-                left.get_key_value(hash, key)
+                // must always be init
+                unsafe { left.as_ref() }.get_key_value(hash, key)
             } else {
                 None
             }
         } else {
             if let Some(ref right) = self.right {
-                right.get_key_value(hash, key)
+                // must always be init
+                unsafe { right.as_ref() }.get_key_value(hash, key)
             } else {
                 None
             }
@@ -80,13 +93,14 @@ where
             Some(&mut self.value)
         } else if hash < self.hash {
             if let Some(ref mut left) = self.left {
-                left.get_mut(hash, key)
+                unsafe { left.as_mut() }.get_mut(hash, key)
             } else {
                 None
             }
         } else {
             if let Some(ref mut right) = self.right {
-                right.get_mut(hash, key)
+                // must always be init
+                unsafe { right.as_mut() }.get_mut(hash, key)
             } else {
                 None
             }
@@ -94,65 +108,21 @@ where
     }
 
     // TODO ahhh
-    fn remove_entry<Q: ?Sized>(&mut self, _hash: u64, _key: &Q) -> (Option<(K, V)>, bool)
+    fn remove_entry<Q: ?Sized>(&mut self, hash: u64, key: &Q) -> Option<(K, V)>
     where
         K: Borrow<Q>,
         Q: Eq,
     {
-        (None, false)
-        /*
         if self.hash == hash && self.key.borrow() == key {
-            let left = self.left.take();
-            let mut right = self.right.take();
-
-            let succ = {
-                if let Some(ref mut right) = right {
-                    right.find_leftmost()
-                } else {
-                    None
-                }
-            };
-            if let Some(mut succ) = succ {
-                mem::swap(self, &mut succ);
-                (Some((succ.key, succ.value)), false)
-            } else {
-                // We need to somehow set self to be None
-                let Node { key, value, .. } = *self;
-                (Some((key, value)), true)
-            }
         } else if hash < self.hash {
-            if let Some(ref mut left) = self.left {
-                match left.remove_entry(hash, key) {
-                    (ret, true) => {
-                        self.left = None;
-                        (ret, false)
-                    }
-                    good_to_forward => good_to_forward,
-                }
-            } else {
-                (None, false)
-            }
         } else {
-            if let Some(ref mut right) = self.right {
-                match right.remove_entry(hash, key) {
-                    (ret, true) => {
-                        self.right = None;
-                        (ret, false)
-                    }
-                    good_to_forward => good_to_forward,
-                }
-            } else {
-                (None, false)
-            }
         }
-        */
+        return None;
     }
 
-    /*
-    fn find_leftmost(&mut self) -> Option<Box<Node<K, V>>> {
+    fn find_leftmost(&mut self) -> Option<NonNull<Node<K, V>>> {
         None
     }
-    */
 }
 
 #[derive(Debug)]
@@ -215,13 +185,7 @@ where
         Q: Eq,
     {
         if let Some(ref mut root) = self.root {
-            match root.remove_entry(hash, key) {
-                (ret, true) => {
-                    self.root = None;
-                    ret
-                }
-                (ret, _) => ret,
-            }
+            root.remove_entry(hash, key)
         } else {
             None
         }
@@ -232,10 +196,11 @@ pub(crate) struct IntoIter<K, V> {
     lineage: Vec<Node<K, V>>,
 }
 
-fn add_left<K, V>(to: &mut Vec<Node<K, V>>, from: Option<Box<Node<K, V>>>) {
+fn add_left<K, V>(to: &mut Vec<Node<K, V>>, from: Option<NonNull<Node<K, V>>>) {
     let mut node = from;
     loop {
-        if let Some(mut left) = node {
+        if let Some(left) = node {
+            let mut left = unsafe { Box::from_raw(left.as_ptr()) };
             let new = left.left.take();
             to.push(*left);
             node = new;
